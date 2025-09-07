@@ -28,7 +28,6 @@ It demonstrates:
 - **Gradle** (build tool)
 - **MySQL** (persistent storage)
 - **Hibernate / JPA** (ORM)
-- **Flyway** (DB migrations)
 
 ### Frontend
 - **React (Vite)** single-page app
