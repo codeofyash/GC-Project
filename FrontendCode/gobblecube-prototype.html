@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>GobbleCube Prototype</title>
+
+  <!-- Tailwind Play CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // GobbleCube Theme
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            gobblecube: {
+              primary: '#FF6A00',
+              primaryDark: '#E65A00',
+              accent: '#0B72B9',
+              neutral: '#111827',
+              muted: '#6B7280',
+              surface: '#FFFFFF',
+              bg: '#F8FAFC'
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    body { background-color: #F8FAFC; color: #111827; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; }
+    .card { background: #fff; border-radius: 12px; padding: 1rem; box-shadow: 0 6px 18px rgba(11,18,30,0.06); }
+    .btn-primary { background: #FF6A00; color: white; padding: .5rem .75rem; border-radius: .375rem; }
+    .btn-secondary { background: #0B72B9; color: white; padding: .5rem .75rem; border-radius: .375rem; }
+    a { cursor: pointer; }
+    .muted { color: #6B7280; }
+  </style>
+</head>
+<body>
+
+<div id="root" class="max-w-7xl mx-auto p-6"></div>
+
+<!-- React + ReactDOM -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<!-- Babel for JSX -->
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel">
+
+const { useState, useEffect } = React;
+// Set to your backend origin
+const API_BASE = 'http://localhost:8080';
+
+// Generic API helper
+const API = {
+  get: async (path, params) => {
+    let url = (API_BASE || '') + path;
+    if (params && Object.keys(params).length > 0) {
+      url += (url.includes('?') ? '&' : '?') + new URLSearchParams(params).toString();
+    }
+    const res = await fetch(url);
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(txt || `${res.status} ${res.statusText}`);
+    }
+    return res.json();
+  },
+  // catalog
+  listBrands: () => API.get('/brands'),
+  listCategories: () => API.get('/categories'),
+  productsByBrand: (id) => API.get(`/brands/${id}/products/all`),
+  productFull: (id) => API.get(`/products/${id}/full`),
+  searchProducts: ({ name, brandId, categoryId }) => API.get('/search/products', { name, brandId, categoryId }),
+  categoryCoverage: (platform) => API.get(`/analytics/platform/${encodeURIComponent(platform)}/category-coverage`),
+  priceCompare: (variantId) => API.get(`/analytics/variant/${encodeURIComponent(variantId)}/price-compare`),
+  gap: (a, b, categoryId) => API.get('/analytics/gap', { platformA: a, platformB: b, categoryId }),
+  // new: subbrands
+  subBrands: (brandId) => API.get(`/brands/${brandId}/subbrands`)
+};
+
+// small fetch hook
+function useFetch(fn, deps = []) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    setLoading(true); setError(null);
+    fn().then(d => { if (alive) setData(d); }).catch(e => { if (alive) setError(e); }).finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, deps);
+  return { data, loading, error };
+}
+
+// Router
+function Router({ children }) {
+  const [path, setPath] = useState(window.location.pathname + window.location.search);
+  useEffect(() => {
+    const onPop = () => setPath(window.location.pathname + window.location.search);
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  const navigate = (to) => {
+    if (typeof to === 'number') { window.history.go(to); return; }
+    window.history.pushState({}, '', to);
+    setPath(to);
+  };
+  return children({ path, navigate });
+}
+
+// Layout
+function Shell({ children, navigate }) {
+  return (
+    <div>
+      <header className="bg-white shadow-sm border-b mb-6">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+          <h1 className="text-xl font-semibold" style={{ color:'#FF6A00' }}>GobbleCube — Catalog Explorer</h1>
+          <nav className="space-x-3">
+            <a className="text-sm text-gobblecube-primary" onClick={() => navigate('/')}>Dashboard</a>
+            <a className="text-sm text-gobblecube-primary" onClick={() => navigate('/brands')}>Brands</a>
+            <a className="text-sm text-gobblecube-primary" onClick={() => navigate('/search')}>Search</a>
+            <a className="text-sm text-gobblecube-primary" onClick={() => navigate('/analytics')}>Analytics</a>
+          </nav>
+        </div>
+      </header>
+      <main className="max-w-7xl mx-auto px-4">{children}</main>
+    </div>
+  );
+}
+
+/* ---------- Components ---------- */
+
+// Dashboard
+function Dashboard({ navigate }) {
+  const { data: brands } = useFetch(() => API.listBrands(), []);
+  const { data: categories } = useFetch(() => API.listCategories(), []);
+  return (
+    <div>
+      <h2 className="text-2xl font-bold mb-4">Dashboard</h2>
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="card">Brands<br/><span className="text-2xl font-semibold">{brands ? brands.length : '—'}</span></div>
+        <div className="card">Categories<br/><span className="text-2xl font-semibold">{categories ? categories.length : '—'}</span></div>
+        <div className="card">Products<br/><span className="text-2xl font-semibold">(use Search)</span></div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="card">
+          <h3 className="font-semibold mb-2">Quick actions</h3>
+          <div className="space-y-2">
+            <button onClick={() => navigate('/brands')} className="btn-primary">Browse Brands</button>
+            <button onClick={() => navigate('/search')} className="btn-secondary">Search Products</button>
+            <button onClick={() => navigate('/analytics')} style={{background:'#E65A00', color:'#fff'}} className="px-3 py-2 rounded">Open Analytics</button>
+          </div>
+        </div>
+
+        <div className="card">
+          <h3 className="font-semibold mb-2">Notes</h3>
+          <ul className="list-disc ml-5 text-sm muted">
+            <li>Dashboard for all brands</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Brands list -> each brand shows two actions
+function Brands({ navigate }) {
+  const { data: brands, loading, error } = useFetch(() => API.listBrands(), []);
+  return (
+    <div>
+      <h2 className="text-2xl font-bold mb-4">Brands</h2>
+      {loading && <div>Loading...</div>}
+      {error && <div className="text-red-600">{error.message}</div>}
+      <div className="grid grid-cols-3 gap-4">
+        {brands && brands.map(b => (
+          <div key={b.id} className="card">
+            <div className="font-semibold">{b.name}</div>
+            {b.description && <div className="text-sm text-gray-600 my-2">{b.description}</div>}
+            <div className="flex gap-2 mt-2">
+              <button onClick={() => navigate(`/brands/${b.id}/products`)} className="px-3 py-1 rounded border text-sm" style={{color:'#FF6A00'}}>View products</button>
+              <button onClick={() => navigate(`/brands/${b.id}/subbrands`)} className="px-3 py-1 rounded border text-sm" style={{color:'#0B72B9'}}>Show sub-brands</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// SubBrands view: lists immediate children of a brand
+function SubBrands({ brandId, navigate }) {
+  const { data: subbrands, loading, error } = useFetch(() => API.subBrands(brandId), [brandId]);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-2xl font-bold">Sub-brands</h2>
+        <button onClick={() => navigate(`/brands/${brandId}/products`)} className="text-sm text-gray-600">Show parent products</button>
+      </div>
+
+      {loading && <div>Loading...</div>}
+      {error && <div className="text-red-600">{error.message}</div>}
+
+      {subbrands && subbrands.length === 0 && <div className="card">No sub-brands found for this brand.</div>}
+
+      {subbrands && subbrands.length > 0 && (
+        <div className="grid grid-cols-3 gap-4">
+          {subbrands.map(s => (
+            <div key={s.id} className="card">
+              <div className="font-semibold">{s.name}</div>
+              {s.description && <div className="text-sm text-gray-600 my-2">{s.description}</div>}
+              <div className="mt-2">
+                <button onClick={() => navigate(`/brands/${s.id}/products`)} className="px-3 py-1 rounded border text-sm" style={{color:'#FF6A00'}}>Show products</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Brand products
+function BrandProducts({ brandId, navigate }) {
+  const { data: products, loading, error } = useFetch(() => API.productsByBrand(brandId), [brandId]);
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-2xl font-bold">Products for Brand</h2>
+        <div>
+          <button onClick={() => navigate('/brands')} className="text-sm text-gray-600 mr-2">Back</button>
+        </div>
+      </div>
+
+      {loading && <div>Loading products...</div>}
+      {error && <div className="text-red-600">{error.message}</div>}
+
+      {products && (
+        <div className="card">
+          <table className="w-full text-sm">
+            <thead><tr className="text-left"><th>Name</th><th>Category</th><th>Variants</th><th>Action</th></tr></thead>
+            <tbody>
+              {products.map(p => (
+                <tr key={p.id} className="border-t">
+                  <td className="py-2">{p.name}</td>
+                  <td className="py-2">{p.categoryId}</td>
+                  <td className="py-2">{p.variants ? p.variants.length : 0}</td>
+                  <td className="py-2"><button onClick={() => navigate(`/products/${p.id}/full`)} className="text-gobblecube-primary">Open</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Product full page
+function ProductFull({ productId, navigate }) {
+  const { data: product, loading, error } = useFetch(() => API.productFull(productId), [productId]);
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-2xl font-bold">Product Details</h2>
+        <button onClick={() => navigate(-1)} className="text-sm text-gray-600">Back</button>
+      </div>
+      {loading && <div>Loading product...</div>}
+      {error && <div className="text-red-600">{error.message}</div>}
+      {product && (
+        <div className="grid grid-cols-3 gap-4">
+          <div className="col-span-2 card">
+            <h3 className="text-xl font-semibold">{product.name}</h3>
+            <div className="text-sm text-gray-600 mb-3">Brand: {product.brandId} • Category: {product.categoryId}</div>
+
+            <h4 className="font-semibold mt-4">Variants</h4>
+            <table className="w-full text-sm mt-2">
+              <thead><tr className="text-left"><th>SKU</th><th>Barcode</th><th>Unit</th><th>Size</th><th>MRP</th><th>Availability</th></tr></thead>
+              <tbody>
+                {product.variants.map(v => (
+                  <tr key={v.id} className="border-t align-top">
+                    <td className="py-2">{v.sku || '-'}</td>
+                    <td className="py-2">{v.barcode || '-'}</td>
+                    <td className="py-2">{v.unit || '-'}</td>
+                    <td className="py-2">{v.size || '-'}</td>
+                    <td className="py-2">{v.mrp != null ? v.mrp : '-'}</td>
+                    <td className="py-2">
+                      {product.variantAvailability && product.variantAvailability[v.id] ? (
+                        <div className="space-y-1">
+                          {product.variantAvailability[v.id].map(a => (
+                            <div key={a.id} className="flex items-center gap-3 text-sm">
+                              <div className="font-medium" style={{color:'#FF6A00'}}>{a.platform}</div>
+                              <div>{a.price != null ? `₹${a.price}` : '-'}</div>
+                              <div className="text-gray-500">{a.inStock ? 'In stock' : 'Out'}</div>
+                              <div className="text-gray-400 text-xs">{a.capturedAt ? new Date(a.capturedAt).toLocaleString() : ''}</div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (<div className="text-sm text-gray-500">No availability</div>)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <aside className="card">
+            <h4 className="font-semibold">Actions</h4>
+            <div className="mt-2 space-y-2">
+              <button onClick={() => { if (product.variants && product.variants[0]) navigate(`/analytics/variant/${product.variants[0].id}`) }} className="btn-primary">Compare first variant</button>
+              <button onClick={() => navigator.clipboard.writeText(window.location.href)} className="px-3 py-2 bg-gray-100 rounded text-sm">Copy link</button>
+            </div>
+          </aside>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Search page
+function Search({ navigate }) {
+  const [q, setQ] = useState('');
+  const [brandId, setBrandId] = useState('');
+  const [categoryId, setCategoryId] = useState('');
+  const [results, setResults] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const { data: brands } = useFetch(() => API.listBrands(), []);
+  const { data: categories } = useFetch(() => API.listCategories(), []);
+
+  async function doSearch(e) {
+    if (e) e.preventDefault();
+    setLoading(true); setErr(null);
+    try {
+      const qs = new URLSearchParams(); if (q) qs.set('q', q); if (brandId) qs.set('brandId', brandId); if (categoryId) qs.set('categoryId', categoryId);
+      const data = await API.searchProducts({ name: q, brandId, categoryId });
+      setResults(data);
+    } catch (e) { setErr(e); }
+    setLoading(false);
+  }
+
+  return (
+    <div>
+      <h2 className="text-2xl font-bold mb-4">Search Products</h2>
+      <form onSubmit={doSearch} className="bg-white p-4 rounded shadow-sm mb-4 grid grid-cols-4 gap-3">
+        <input placeholder="search text" className="col-span-2 border p-2 rounded" value={q} onChange={e=>setQ(e.target.value)} />
+        <select className="border p-2 rounded" value={brandId} onChange={e=>setBrandId(e.target.value)}>
+          <option value="">All brands</option>
+          {brands && brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+        <select className="border p-2 rounded" value={categoryId} onChange={e=>setCategoryId(e.target.value)}>
+          <option value="">All categories</option>
+          {categories && categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <div className="col-span-4 mt-2">
+          <button type="submit" className="px-3 py-2 bg-blue-600 text-white rounded">Search</button>
+          <button type="button" onClick={() => { setQ(''); setBrandId(''); setCategoryId(''); setResults(null); }} className="ml-2 px-3 py-2 bg-gray-100 rounded">Clear</button>
+        </div>
+      </form>
+
+      {loading && <div>Searching...</div>}
+      {err && <div className="text-red-600">{err.message}</div>}
+
+      {results && (
+        <div className="bg-white p-4 rounded shadow-sm">
+          <div className="text-sm text-gray-600 mb-2">{results.length} results</div>
+          <ul className="divide-y">
+            {results.map(r => (
+              <li key={r.id} className="py-2 flex justify-between">
+                <div>
+                  <div className="font-medium">{r.name}</div>
+                  <div className="text-xs text-gray-500">Brand: {r.brandId} • Category: {r.categoryId}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => navigate(`/products/${r.id}/full`)} className="text-blue-600 text-sm">Open</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Analytics overview (unchanged)
+function Analytics({ navigate }) {
+  const [platform, setPlatform] = useState('zepto');
+  const { data: coverage, loading, error } = useFetch(() => API.categoryCoverage(platform), [platform]);
+
+  return (
+    <div>
+      <h2 className="text-2xl font-bold mb-4">Analytics</h2>
+      <div className="bg-white p-4 rounded shadow-sm mb-4">
+        <label className="block text-sm mb-2">Platform</label>
+        <select value={platform} onChange={e=>setPlatform(e.target.value)} className="border p-2 rounded">
+          <option value="zepto">Zepto</option>
+          <option value="blinkit">Blinkit</option>
+          <option value="flipkart">Flipkart</option>
+        </select>
+      </div>
+
+      <div className="bg-white p-4 rounded shadow-sm">
+        <h4 className="font-semibold mb-2">Category coverage (latest)</h4>
+        {loading && <div>Loading...</div>}
+        {error && <div className="text-red-600">{error.message}</div>}
+        {coverage && (
+          <table className="w-full text-sm">
+            <thead><tr className="text-left"><th>Category</th><th>Variants</th><th>Products</th></tr></thead>
+            <tbody>
+              {coverage.map(c => (
+                <tr key={c.categoryId} className="border-t">
+                  <td className="py-2">{c.categoryName}</td>
+                  <td className="py-2">{c.variantCount}</td>
+                  <td className="py-2">{c.productCount}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="mt-4">
+        <h4 className="font-semibold mb-2">Gap analysis</h4>
+        <GapForm navigate={navigate} />
+      </div>
+    </div>
+  );
+}
+
+function AnalyticsVariantCompare({ variantId, navigate }) {
+  const { data: compare, loading, error } = useFetch(() => API.priceCompare(variantId), [variantId]);
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-2xl font-bold">Price Comparison — Variant {variantId}</h2>
+        <button onClick={() => navigate('/analytics')} className="text-sm text-gray-600">Back</button>
+      </div>
+
+      <div className="card">
+        {loading && <div>Loading...</div>}
+        {error && <div className="text-red-600">{error.message}</div>}
+        {compare && (
+          <table className="w-full text-sm">
+            <thead><tr><th className="text-left">Platform</th><th>Min</th><th>Avg</th><th>Max</th><th>Latest</th></tr></thead>
+            <tbody>
+              {compare.map(r => (
+                <tr key={r.platform} className="border-t">
+                  <td className="py-2 font-medium" style={{color:'#FF6A00'}}>{r.platform}</td>
+                  <td className="py-2">{r.minPrice != null ? `₹${r.minPrice}` : '-'}</td>
+                  <td className="py-2">{r.avgPrice != null ? `₹${r.avgPrice}` : '-'}</td>
+                  <td className="py-2">{r.maxPrice != null ? `₹${r.maxPrice}` : '-'}</td>
+                  <td className="py-2">{r.latestPrice != null ? `₹${r.latestPrice}` : '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function GapForm({ navigate }) {
+  const [a, setA] = useState('zepto');
+  const [b, setB] = useState('blinkit');
+  const [categoryId, setCategoryId] = useState('');
+  const [results, setResults] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  async function run() {
+    setLoading(true); setErr(null); setResults(null);
+    try {
+      const data = await API.gap(a, b, categoryId || undefined);
+      setResults(data);
+    } catch (e) { setErr(e); }
+    setLoading(false);
+  }
+
+  return (
+    <div className="card">
+      <div className="flex gap-2 mb-3">
+        <select value={a} onChange={e => setA(e.target.value)} className="border p-2 rounded">
+          <option value="zepto">Zepto</option>
+          <option value="blinkit">Blinkit</option>
+        </select>
+        <select value={b} onChange={e => setB(e.target.value)} className="border p-2 rounded">
+          <option value="blinkit">Blinkit</option>
+          <option value="zepto">Zepto</option>
+        </select>
+        <input placeholder="categoryId (optional)" className="border p-2 rounded" value={categoryId} onChange={e => setCategoryId(e.target.value)} />
+        <button onClick={run} className="btn-primary">Run</button>
+      </div>
+      {loading && <div>Running...</div>}
+      {err && <div className="text-red-600">{err.message}</div>}
+      {results && (
+        <div>
+          <div className="text-sm text-gray-600 mb-2">{results.length} variants missing on {b}</div>
+          <ul className="list-disc ml-5">
+            {results.map(id => (
+              <li key={id}><a style={{color:'#FF6A00', cursor:'pointer'}} onClick={() => navigate(`/products/${id}/full`)}>Open product for variant {id}</a></li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* App: route handling */
+function AppRouter({ path, navigate }) {
+  const pathname = path.split('?')[0];
+
+  if (pathname === '/' || pathname === '') return <Shell navigate={navigate}><Dashboard navigate={navigate}/></Shell>;
+  if (pathname === '/brands') return <Shell navigate={navigate}><Brands navigate={navigate}/></Shell>;
+  if (pathname.startsWith('/brands/') && pathname.endsWith('/products')) {
+    const parts = pathname.split('/'); const brandId = parts[2]; return <Shell navigate={navigate}><BrandProducts brandId={brandId} navigate={navigate}/></Shell>;
+  }
+  if (pathname.startsWith('/brands/') && pathname.endsWith('/subbrands')) {
+    const parts = pathname.split('/'); const brandId = parts[2]; return <Shell navigate={navigate}><SubBrands brandId={brandId} navigate={navigate}/></Shell>;
+  }
+  if (pathname.startsWith('/products/') && pathname.endsWith('/full')) {
+    const parts = pathname.split('/'); const productId = parts[2]; return <Shell navigate={navigate}><ProductFull productId={productId} navigate={navigate}/></Shell>;
+  }
+  if (pathname === '/search') return <Shell navigate={navigate}><Search navigate={navigate}/></Shell>;
+  if (pathname.startsWith('/analytics')) {
+    if (pathname.startsWith('/analytics/variant/')) {
+      const parts = pathname.split('/'); const variantId = parts[3]; return <Shell navigate={navigate}><AnalyticsVariantCompare variantId={variantId} navigate={navigate}/></Shell>;
+    }
+    return <Shell navigate={navigate}><Analytics navigate={navigate}/></Shell>;
+  }
+
+  // fallback
+  return <Shell navigate={navigate}><div>Route not found: {pathname}</div></Shell>;
+}
+
+/* Mount app */
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <Router>
+    {({ path, navigate }) => {
+      // helper to allow navigate(-1)
+      const doNavigate = (to) => typeof to === 'number' ? window.history.go(to) : navigate(to);
+      return <AppRouter path={path} navigate={doNavigate} />
+    }}
+  </Router>
+);
+
+</script>
+</body>
+</html>
